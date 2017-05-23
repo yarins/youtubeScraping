@@ -1,0 +1,360 @@
+---
+title: "youtubeR"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Part One
+
+
+```{r }
+#install.packages(c("igraph","digest","rgl","httr","rcurl","jsonlite"))
+
+library(igraph)
+library(digest)
+#library(rgl)
+library(httr)
+library(RCurl)
+library(dplyr)
+library(jsonlite)
+```
+
+## Read CSV
+
+Here we read the csv into a dataframe & build graph g
+
+```{r }
+ga.data <- read.csv('ga_edgelist.csv', header = T)
+g <- graph.data.frame(ga.data,directed = F)
+```
+
+## Centrality 
+
+we build a dataframe with each metric
+
+```{r }
+gb <- betweenness(g)
+gc <- closeness(g)
+ge <- eigen_centrality(g)$vector
+
+a <- as.data.frame(as.vector(gb))
+a <- cbind(a,as.vector(ge))
+a <- cbind(a,as.vector(gc)) 
+a <- cbind(a,names(ge)) 
+
+colnames(a) <- c("betweenness","closeness","eigen_centrality","names")
+
+a
+```
+
+## Finding maximal vlues
+
+
+```{r }
+
+  a <- a %>%
+    mutate(mxgb = ifelse(betweenness==max(betweenness),1,0),
+           mxgc = ifelse(closeness==max(closeness),1,0),
+           mxge = ifelse(eigen_centrality==max(eigen_centrality),1,0)) 
+
+```
+
+
+## Max Betweenness
+
+```{r }
+ a %>% 
+  filter(mxgb==1) %>%
+  select(names,betweenness)
+```
+
+## Max closeness
+
+
+
+```{r }
+ a %>% 
+  filter(mxgc==1) %>%
+  select(names,closeness)
+```
+## Max eigen_centrality
+
+```{r }
+ a %>% 
+  filter(mxge==1) %>%
+  select(names,eigen_centrality)
+```
+
+## Run community algorithms
+
+Edge betweenness and sizes of its 7 groups
+
+```{r }
+gc <-  edge.betweenness.community(g)
+
+
+sizes(gc)
+```
+
+
+
+Fastgreedy and and sizes of its 6 groups
+
+```{r }
+
+gc2 <- fastgreedy.community(g)
+
+sizes(gc2)
+```
+
+## Plot of Edge betweenness
+
+```{r }
+plot(g, vertex.size=5, vertex.label=names(g),
+     vertex.color=membership(gc), asp=FALSE)
+```
+
+## Plot of Fastgreedy
+
+
+
+```{r }
+plot(g, vertex.size=5, vertex.label=names(g),
+     vertex.color=membership(gc2), asp=FALSE)
+```
+## Edge betweenness modularity
+
+```{r }
+max(gc$modularity)
+
+
+```
+
+## Fastgreedy modularity
+
+
+
+```{r }
+max(gc2$modularity)
+```
+## Part Two
+
+Here we crawl youtube for channels and subscriptions, each channel has several subscribtions which are 
+themselves channels. The relation between a channel and a subscription would be our edge, the channels are
+our vertices. 
+
+```{r }
+#  API key obtained via https://console.developers.google.com/ 
+API_key='AIzaSyAkrLrCEIpS8s-GMMuz31SEM8Yx7ukv5W8'
+
+# Base URL for Google API's services and YouTube specific API's
+Base_URL='https://www.googleapis.com/youtube/v3'
+
+# YouTube Web Services
+
+
+
+YT_Service <- c( 'search?part=snippet&q=%s&type=%s&key=%s',                         # search API
+                 'subscriptions?part=snippet,contentDetails&channelId=%s&key=%s&maxResults=15'    # subscriptions API
+)
+
+
+# here is the initial channel from which we crawl
+cId <- 'UC74nY8aA7H3OWPRHJz6bUCQ'
+```
+
+
+## Crawling phase
+
+set up the url
+
+```{r }
+url <- paste0(Base_URL, "/", sprintf(YT_Service[2], cId, API_key))
+```
+
+## read json
+
+```{r }
+result <- jsonlite::fromJSON(txt=url)
+```
+
+
+
+A list of subscription for the channel
+
+```{r }
+result$items$snippet$title
+```
+
+## build an initial dataframe for channels and subscriptions
+
+```{r }
+names <- as.list(result$items$snippet$title)
+df <- as.data.frame(result$items$snippet$title)
+df$col2 <- "MYNAME"
+colnames(df) <- c("subscribtions","channel")
+
+df
+```
+
+
+
+keep a list of channelIds for the crawling phase
+
+```{r }
+cIds <- as.list(result$items$snippet$resourceId$channelId)
+```
+
+## Crawler function
+
+```{r }
+crawl <- function(df,idx){
+  url2 <- paste0(Base_URL, "/", sprintf(YT_Service[2], cIds[[idx]][1], API_key))
+  result2 <- jsonlite::fromJSON(txt=url2)
+  cName <- lapply(1:length(result2$items$snippet$title), function(j) names[[idx]][1])
+  cName <- as.data.frame(unlist(cName))
+  dft <- as.data.frame(result2$items$snippet$title)
+  dft <- cbind(dft,cName)
+  colnames(dft) <- c("subscribtions","channel")
+  return(dft)
+}
+```
+
+
+
+keep a list of crawled channels
+
+```{r }
+dfs <- lapply(c(1,3:6,8,10:13), function(x) crawl(df,x))
+```
+
+## A new dataframe full of channels and subscriptions, ready for the graph
+
+```{r }
+df2 <- do.call(rbind,dfs)
+df <- rbind(df,df2)
+colnames(df) <- c("from","to")
+
+head(df)
+```
+
+## Build the graph
+
+
+
+```{r }
+gf <- graph.data.frame(df,directed = F)
+```
+
+
+
+## Centrality metrics
+
+```{r }
+gfb <- betweenness(gf)
+gfc <- closeness(gf)
+gfe <- eigen_centrality(gf)$vector
+
+a2 <- as.data.frame(as.vector(gfb))
+a2 <- cbind(a2,as.vector(gfe))
+a2 <- cbind(a2,as.vector(gfc)) 
+a2 <- cbind(a2,names(gfe)) 
+
+colnames(a2) <- c("betweenness","closeness","eigen_centrality","names")
+
+a2
+```
+
+preparations
+
+```{r }
+
+  a2 <- a2 %>%
+    mutate(mxgfb = ifelse(betweenness==max(betweenness),1,0),
+           mxgfc = ifelse(closeness==max(closeness),1,0),
+           mxgfe = ifelse(eigen_centrality==max(eigen_centrality),1,0)) 
+
+```
+
+
+## Max betweenness
+
+```{r }
+ a2 %>% 
+  filter(mxgfb==1) %>%
+  select(names,betweenness)
+```
+
+## Max closeness
+
+
+
+```{r }
+ a2 %>% 
+  filter(mxgfc==1) %>%
+  select(names,closeness)
+```
+
+## Max eigen_centrality
+
+```{r }
+ a2 %>% 
+  filter(mxgfe==1) %>%
+  select(names,eigen_centrality)
+```
+
+## Community algos
+
+edge.betweenness and sizes of the 9 groups
+
+```{r }
+gc3 <-  edge.betweenness.community(gf)
+
+
+sizes(gc3)
+```
+
+
+
+fastgreedy.community and sizes of its 9 groups
+
+```{r }
+
+gc4 <- fastgreedy.community(gf)
+
+sizes(gc4)
+```
+
+## edge betweenness graph
+
+```{r }
+plot(gf, vertex.size=5, vertex.label=names(gf),
+     vertex.color=membership(gc3), asp=FALSE)
+```
+
+## fastgreedy.community graph
+
+You can also embed plots, for example:
+
+```{r }
+plot(gf, vertex.size=5, vertex.label=names(gf),
+     vertex.color=membership(gc4), asp=FALSE)
+```
+## edge betweenness modularity
+
+```{r }
+max(gc3$modularity)
+
+
+```
+
+## greedy modularity
+
+You can also embed plots, for example:
+
+```{r }
+max(gc4$modularity)
+```
